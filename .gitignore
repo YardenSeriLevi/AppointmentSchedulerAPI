@@ -16,3 +16,7 @@
 
 # Mac
 .DS_Store
+
+# Ignore local settings files
+appsettings.Development.json
+appsettings.json
