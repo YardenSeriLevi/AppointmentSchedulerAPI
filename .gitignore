@@ -20,3 +20,5 @@
 # Ignore local settings files
 appsettings.Development.json
 appsettings.json
+
+TestController.cs
