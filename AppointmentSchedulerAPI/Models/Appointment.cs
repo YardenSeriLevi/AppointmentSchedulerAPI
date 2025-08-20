@@ -3,10 +3,14 @@
     public class Appointment
     {
         public int Id { get; set; }
-        public int ClientId { get; set; } // Foreign Key to User table
-        public int ServiceId { get; set; } // Foreign Key to Service table
+        public int? ClientId { get; set; } // Nullable, for registered users
+        public int ServiceId { get; set; }
         public DateTime StartTime { get; set; }
         public DateTime EndTime { get; set; }
-        public string Status { get; set; } // e.g., "Confirmed", "Cancelled"
+        public string Status { get; set; }
+
+        // New fields for guests
+        public string? GuestName { get; set; }
+        public string? GuestPhone { get; set; }
     }
 }

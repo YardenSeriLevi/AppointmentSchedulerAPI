@@ -1,19 +1,11 @@
 ﻿using AppointmentSchedulerAPI.Data;
 using AppointmentSchedulerAPI.DTOs;
-using AppointmentSchedulerAPI.DTOs;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
-using AppointmentSchedulerAPI.DTOs;
-using Microsoft.EntityFrameworkCore;
-using System.Security.Claims; // For claims
-using Microsoft.IdentityModel.Tokens; // For security key
-using System.Text; // For Encoding
-using System.IdentityModel.Tokens.Jwt; // For JWT creation
 namespace AppointmentSchedulerAPI.Controllers
 {
     [Route("api/[controller]")]
