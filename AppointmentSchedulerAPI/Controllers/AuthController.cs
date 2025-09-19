@@ -38,6 +38,7 @@ namespace AppointmentSchedulerAPI.Controllers
             {
                 FullName = request.FullName,
                 Email = request.Email,
+                PhoneNumber = request.PhoneNumber,
                 PasswordHash = passwordHash,
                 Role = "Client" // Default role for new users
             };
@@ -49,20 +50,20 @@ namespace AppointmentSchedulerAPI.Controllers
             // 5. Return a success response
             return Ok("User registered successfully.");
         }
-        [HttpPost("login")]
+        [HttpPost("login")] //Defines the route: /api/auth/login
         public async Task<IActionResult> Login(UserLoginDto request)
         {
             // 1. Find the user by email
             var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == request.Email);
             if (user == null)
             {
-                return BadRequest("Invalid credentials."); // Use a generic message for security
+                return BadRequest("לא נמצא משתמש עם המייל שהוזן נסה שנית."); // Use a generic message for security
             }
 
             // 2. Verify the password
             if (!BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
             {
-                return BadRequest("Invalid credentials.");
+                return BadRequest("סיסמה שגויה נסה שנית");
             }
 
             // 3. Create JWT Token

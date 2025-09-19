@@ -10,6 +10,19 @@ using Microsoft.OpenApi.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
+/* CORS Configuration to allow requests from the React app
+   Adjust the URL to match your React app's address and port
+*/
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowReactApp", policy =>
+    {
+        policy.WithOrigins("http://localhost:3000") // The address of your React app
+              .AllowAnyHeader()
+              .AllowAnyMethod();
+    });
+});
+
 // Add services to the container.
 builder.Services.AddControllers();
 // Add Authentication
@@ -72,6 +85,8 @@ builder.Services.AddSwaggerGen(options =>
 });
 
 var app = builder.Build();
+
+app.UseCors("AllowReactApp"); // Apply the CORS policy
 
 // Configure the HTTP request pipeline.
 // This block enables the interactive UI in development mode
