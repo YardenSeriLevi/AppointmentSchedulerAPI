@@ -21,78 +21,90 @@ namespace AppointmentSchedulerAPI.Controllers
             var services = await _context.Services.ToListAsync();
             return Ok(services);
         }
-        [HttpGet("availability")] // Defines the route: GET /api/provider/availability
+        [HttpGet("availability")]
         public async Task<IActionResult> GetAvailability([FromQuery] int serviceId)
         {
-            // 1. קבל את פרטי השירות המבוקש כדי לדעת את אורך התור
             var service = await _context.Services.FindAsync(serviceId);
-            if (service == null)
-            {
-                return BadRequest("Service not found.");
-            }
-            var slotDurationInMinutes = service.DurationInMinutes; // e.g., 20 minutes
+            if (service == null) return BadRequest("Service not found.");
+            var slotDurationInMinutes = service.DurationInMinutes;
 
-            // 2. הגדר את טווח הזמן לבדיקה
-            var startDate = DateTime.Today;
-            var endDate = startDate.AddDays(14); // Let's check for 2 weeks
+            var israelTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Israel Standard Time");
+            var nowInIsrael = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, israelTimeZone);
+            var utcOffset = israelTimeZone.GetUtcOffset(nowInIsrael);
 
-            // 3. שלוף את כל המידע הרלוונטי מבסיס הנתונים בפעם אחת
+            var scanStartUtc = DateTime.UtcNow; // נקודת התחלה היא תמיד UTC
+            var scanEndDate = scanStartUtc.Date.AddDays(14);
+
             var workHours = await _context.Availabilities.ToListAsync();
-            var existingAppointments = await _context.Appointments
-                .Where(a => a.StartTime >= startDate && a.StartTime < endDate)
+
+            var appointmentsListUtc = await _context.Appointments
+                .Where(a => a.StartTime >= scanStartUtc && a.StartTime < scanEndDate)
+                .Select(a => a.StartTime)
                 .ToListAsync();
-            var timeBlocks = await _context.TimeBlocks
-                .Where(tb => tb.StartTime < endDate && tb.EndTime > startDate)
+            var existingAppointmentsUtc = new HashSet<DateTime>(appointmentsListUtc);
+
+            var timeBlocksUtc = await _context.TimeBlocks
+                .Where(tb => tb.StartTime < scanEndDate && tb.EndTime > scanStartUtc)
                 .ToListAsync();
 
-            var availableSlots = new List<DateTime>();
+            var availableSlotsUtc = new HashSet<DateTime>();
 
-            // 4. עבור על כל יום בטווח
-            for (var day = startDate; day < endDate; day = day.AddDays(1))
+            for (var day = scanStartUtc.Date; day < scanEndDate; day = day.AddDays(1))
             {
-                // 5. קבע את שעות העבודה הבסיסיות לאותו יום
                 var dayWorkHours = workHours.FirstOrDefault(wh => wh.DayOfWeek == day.DayOfWeek);
-                if (dayWorkHours == null) continue; // לא עובד ביום הזה
+                if (dayWorkHours == null) continue;
 
-                DateTime potentialSlot = day.Date + dayWorkHours.StartTime;
-                DateTime endOfDay = day.Date + dayWorkHours.EndTime;
+                // 1. צור את שעת ההתחלה והסיום כתאריך מקומי
+                var workStartLocal = day.Date + dayWorkHours.StartTime;
+                var workEndLocal = day.Date + dayWorkHours.EndTime;
 
-                // 6. עבור על כל משבצת זמן אפשרית באותו יום
-                while (potentialSlot.AddMinutes(slotDurationInMinutes) <= endOfDay)
+                // 2. המר אותם ל-UTC על ידי הפחתה ידנית של הפרש השעות
+                var workStartUtc = workStartLocal - utcOffset;
+                var workEndUtc = workEndLocal - utcOffset;
+
+                var potentialSlotUtc = workStartUtc;
+                if (potentialSlotUtc < scanStartUtc)
                 {
-                    DateTime slotEnd = potentialSlot.AddMinutes(slotDurationInMinutes);
+                    potentialSlotUtc = scanStartUtc;
+                }
 
-                    // 7. בדוק חוקים - האם המשבצת הזו תקינה?
-                    bool isBooked = existingAppointments.Any(a => a.StartTime == potentialSlot);
-                    bool isBlocked = timeBlocks.Any(tb => !tb.IsAvailable && potentialSlot < tb.EndTime && slotEnd > tb.StartTime);
+                while (potentialSlotUtc.AddMinutes(slotDurationInMinutes) <= workEndUtc)
+                {
+                    var slotEndUtc = potentialSlotUtc.AddMinutes(slotDurationInMinutes);
 
-                    if (!isBooked && !isBlocked)
+                    if (!existingAppointmentsUtc.Contains(potentialSlotUtc) &&
+                        !timeBlocksUtc.Any(tb => !tb.IsAvailable && potentialSlotUtc < tb.EndTime && slotEndUtc > tb.StartTime))
                     {
-                        // הוסף את המשבצת אם היא פנויה ולא חסומה
-                        availableSlots.Add(potentialSlot);
+                        availableSlotsUtc.Add(potentialSlotUtc);
                     }
 
-                    // קפוץ למשבצת הבאה (פה נכנסת הגמישות!)
-                    potentialSlot = potentialSlot.AddMinutes(slotDurationInMinutes);
+                    potentialSlotUtc = potentialSlotUtc.AddMinutes(slotDurationInMinutes);
                 }
             }
 
-            // 8. הוסף זמינויות מיוחדות (אם יש)
-            var specialAvailabilities = timeBlocks.Where(tb => tb.IsAvailable).ToList();
+            // ============================ הוספנו בחזרה את החלק החסר ============================
+            // הטיפול בזמינויות מיוחדות (כבר ב-UTC מה-DB)
+            var specialAvailabilities = timeBlocksUtc.Where(tb => tb.IsAvailable).ToList();
             foreach (var specialBlock in specialAvailabilities)
             {
-                DateTime potentialSlot = specialBlock.StartTime;
-                while (potentialSlot.AddMinutes(slotDurationInMinutes) <= specialBlock.EndTime)
+                var potentialSlotUtc = specialBlock.StartTime;
+                if (potentialSlotUtc < scanStartUtc)
                 {
-                    if (!availableSlots.Contains(potentialSlot))
+                    potentialSlotUtc = scanStartUtc;
+                }
+
+                while (potentialSlotUtc.AddMinutes(slotDurationInMinutes) <= specialBlock.EndTime)
+                {
+                    if (!existingAppointmentsUtc.Contains(potentialSlotUtc))
                     {
-                        availableSlots.Add(potentialSlot);
+                        availableSlotsUtc.Add(potentialSlotUtc);
                     }
-                    potentialSlot = potentialSlot.AddMinutes(slotDurationInMinutes);
+                    potentialSlotUtc = potentialSlotUtc.AddMinutes(slotDurationInMinutes);
                 }
             }
+            // =================================================================================
 
-            return Ok(availableSlots.OrderBy(s => s));
+            return Ok(availableSlotsUtc.OrderBy(s => s));
         }
         [HttpPost("book-as-guest")] // POST /api/provider/book-as-guest
         public async Task<IActionResult> BookAsGuest([FromBody] GuestAppointmentDto request)

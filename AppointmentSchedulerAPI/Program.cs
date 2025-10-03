@@ -25,6 +25,13 @@ builder.Services.AddCors(options =>
 
 // Add services to the container.
 builder.Services.AddControllers();
+
+builder.Services.AddControllers().AddJsonOptions(options =>
+{
+    options.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+    // This ensures dates are handled consistently
+    options.JsonSerializerOptions.Converters.Add(new UtcDateTimeConverter());
+});
 // Add Authentication
 builder.Services.AddAuthentication(options =>
 {

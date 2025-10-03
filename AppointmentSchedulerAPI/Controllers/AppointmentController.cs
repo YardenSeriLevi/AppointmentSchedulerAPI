@@ -22,46 +22,48 @@ namespace AppointmentSchedulerAPI.Controllers
         }
 
         //נקודת קצה עבור הזמנת תור למשתמש מחובר למערכת
-        [HttpPost] // POST /api/appointment
+        [HttpPost] // מגדיר את הנתיב כ- POST /api/appointment
         public async Task<IActionResult> BookAppointment([FromBody] BookAppointmentDto request)
         {
             // 1. חילוץ מזהה המשתמש מהטוקן
-            // ה-ClaimsPrincipal 'User' זמין לנו אוטומטית בכל קונטרולר מאובטח.
+            // ה-ClaimsPrincipal 'User' זמין לנו אוטומטית בכל קונטרולר מאובטח בזכות ה-[Authorize].
             var userIdString = User.FindFirstValue(ClaimTypes.NameIdentifier);
             if (string.IsNullOrEmpty(userIdString) || !int.TryParse(userIdString, out var userId))
             {
-                return Unauthorized(); // אם הטוקן לא תקין או שאין בו ID
+                // מצב כזה לא אמור לקרות אם [Authorize] עובד, אבל זו בדיקת בטיחות טובה.
+                return Unauthorized();
             }
 
             // 2. ולידציות
-            // 2a. ודאי שהשירות קיים
+            // 2a. ודאי שהשירות שהלקוח ביקש קיים בבסיס הנתונים
             var service = await _context.Services.FindAsync(request.ServiceId);
             if (service == null)
             {
                 return BadRequest(new { message = "Service not found." });
             }
 
-            // 2b. ודא שהמשבצת המבוקשת באמת פנויה (החלק הכי קריטי)
-            // (זוהי בדיקה חוזרת בצד השרת, למקרה שמישהו אחר תפס את התור בשנייה האחרונה)
+            // ============================ התיקון הקריטי מתחיל כאן ============================
+            // 2b. ודאי שהמשבצת המבוקשת באמת פנויה לפני יצירת התור.
+            // זוהי בדיקה חיונית למניעת מצב שבו שני משתמשים מזמינים את אותו תור באותו זמן (Race Condition).
             var isSlotTaken = await _context.Appointments.AnyAsync(a => a.StartTime == request.StartTime);
             if (isSlotTaken)
             {
-                return BadRequest(new { message = "This time slot has just been taken. Please choose another one." });
+                // אנחנו מחזירים סטטוס 409 Conflict, שזו התשובה הסמנטית הנכונה ביותר
+                // למצב שבו הבקשה תקינה אבל מתנגשת עם המצב הנוכחי של המערכת.
+                return Conflict(new { message = "This time slot has just been taken. Please choose another one." });
             }
+            // ===============================================================================
 
-            // כאן אפשר להוסיף ולידציה מורכבת יותר שבודקת מול מנוע הזמינות,
-            // אבל לצורך הפרויקט, בדיקה מול תורים קיימים היא מספקת.
-
-            // 3. יצירת התור החדש
+            // 3. יצירת אובייקט התור החדש
             var newAppointment = new AppointmentSchedulerAPI.Models.Appointment
             {
                 ServiceId = request.ServiceId,
-                ClientId = userId, // <-- שיוך למשתמש הרשום
+                ClientId = userId, // <-- כאן אנחנו משייכים את התור למשתמש הרשום ששלףנו מהטוקן
                 StartTime = request.StartTime,
                 EndTime = request.StartTime.AddMinutes(service.DurationInMinutes),
                 Status = "Confirmed",
-                GuestName = null, // לא אורח
-                GuestPhone = null // לא אורח
+                GuestName = null, // זה לא תור של אורח
+                GuestPhone = null // זה לא תור של אורח
             };
 
             // 4. שמירה בבסיס הנתונים
@@ -69,7 +71,8 @@ namespace AppointmentSchedulerAPI.Controllers
             await _context.SaveChangesAsync();
 
             // 5. החזרת תשובה מוצלחת
-            // נהוג להחזיר את האובייקט החדש שנוצר יחד עם סטטוס 201 Created
+            // מחזירים סטטוס 201 Created, שהוא הסטנדרט לפעולת יצירה מוצלחת,
+            // יחד עם התור החדש שנוצר.
             return CreatedAtAction(nameof(BookAppointment), new { id = newAppointment.Id }, newAppointment);
         }
     }
