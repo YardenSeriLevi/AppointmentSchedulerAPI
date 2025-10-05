@@ -58,7 +58,7 @@ namespace AppointmentSchedulerAPI.Controllers
             var newAppointment = new AppointmentSchedulerAPI.Models.Appointment
             {
                 ServiceId = request.ServiceId,
-                ClientId = userId, // <-- כאן אנחנו משייכים את התור למשתמש הרשום ששלףנו מהטוקן
+                ClientId = userId, // <-- כאן אנחנו משייכים את התור למשתמש הרשום ששלפנו מהטוקן
                 StartTime = request.StartTime,
                 EndTime = request.StartTime.AddMinutes(service.DurationInMinutes),
                 Status = "Confirmed",
@@ -74,6 +74,41 @@ namespace AppointmentSchedulerAPI.Controllers
             // מחזירים סטטוס 201 Created, שהוא הסטנדרט לפעולת יצירה מוצלחת,
             // יחד עם התור החדש שנוצר.
             return CreatedAtAction(nameof(BookAppointment), new { id = newAppointment.Id }, newAppointment);
+        }
+
+        [HttpGet("my-appointments")] // Defines the route: GET /api/appointment/my-appointments
+        public async Task<IActionResult> GetMyAppointments()
+        {
+            // 1. זיהוי המשתמש מהטוקן
+            var userIdString = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (!int.TryParse(userIdString, out var userId))
+            {
+                return Unauthorized(); // Should not happen if [Authorize] is working
+            }
+
+            // 2. הגדרת הזמן הנוכחי ב-UTC
+            var now = DateTime.UtcNow;
+
+            // 3. שאילתה לתורים מהעבר (ה-2 האחרונים)
+            var pastAppointments = await _context.Appointments
+                .Where(a => a.ClientId == userId && a.StartTime < now)
+                .OrderByDescending(a => a.StartTime)
+                .Take(2)
+                .ToListAsync();
+
+            // 4. שאילתה לתורים עתידיים (כל התורים מהיום והלאה)
+            var futureAppointments = await _context.Appointments
+                .Where(a => a.ClientId == userId && a.StartTime >= now)
+                .OrderBy(a => a.StartTime)
+                .ToListAsync();
+
+            // 5. איחוד שתי הרשימות
+            var allAppointments = futureAppointments.Concat(pastAppointments)
+                                                      .OrderBy(a => a.StartTime) // מיון סופי של הרשימה המאוחדת
+                                                      .ToList();
+
+            // 6. החזרת התוצאה
+            return Ok(allAppointments);
         }
     }
 }

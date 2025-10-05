@@ -118,7 +118,7 @@ namespace AppointmentSchedulerAPI.Controllers
             var isSlotAvailable = !(await _context.Appointments.AnyAsync(a => a.StartTime == request.StartTime));
             if (!isSlotAvailable)
             {
-                return BadRequest("This time slot is no longer available.");
+                return BadRequest("מצטערים, התור שביקשת אינו זמין יותר, אנה בחר בתור אחר ");
             }
             var newAppointment = new AppointmentSchedulerAPI.Models.Appointment
             {
