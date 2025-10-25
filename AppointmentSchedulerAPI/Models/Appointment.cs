@@ -5,6 +5,7 @@
         public int Id { get; set; }
         public int? ClientId { get; set; } // Nullable, for registered users
         public int ServiceId { get; set; }
+        public Service Service { get; set; }
         public DateTime StartTime { get; set; }
         public DateTime EndTime { get; set; }
         public string Status { get; set; }

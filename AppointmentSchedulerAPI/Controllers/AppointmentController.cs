@@ -26,44 +26,44 @@ namespace AppointmentSchedulerAPI.Controllers
         public async Task<IActionResult> BookAppointment([FromBody] BookAppointmentDto request)
         {
             // 1. חילוץ מזהה המשתמש מהטוקן
-            // ה-ClaimsPrincipal 'User' זמין לנו אוטומטית בכל קונטרולר מאובטח בזכות ה-[Authorize].
             var userIdString = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (string.IsNullOrEmpty(userIdString) || !int.TryParse(userIdString, out var userId))
+            if (!int.TryParse(userIdString, out var userId))
             {
-                // מצב כזה לא אמור לקרות אם [Authorize] עובד, אבל זו בדיקת בטיחות טובה.
                 return Unauthorized();
             }
 
+            // --- התיקון מתחיל כאן ---
+            // 1b. שלוף את כל פרטי המשתמש מבסיס הנתונים
+            var currentUser = await _context.Users.FindAsync(userId);
+            if (currentUser == null)
+            {
+                return Unauthorized("User not found."); // מצב אבטחה חריג
+            }
+            // --- סוף התיקון ---
+
             // 2. ולידציות
-            // 2a. ודאי שהשירות שהלקוח ביקש קיים בבסיס הנתונים
             var service = await _context.Services.FindAsync(request.ServiceId);
             if (service == null)
             {
                 return BadRequest(new { message = "Service not found." });
             }
 
-            // ============================ התיקון הקריטי מתחיל כאן ============================
-            // 2b. ודאי שהמשבצת המבוקשת באמת פנויה לפני יצירת התור.
-            // זוהי בדיקה חיונית למניעת מצב שבו שני משתמשים מזמינים את אותו תור באותו זמן (Race Condition).
             var isSlotTaken = await _context.Appointments.AnyAsync(a => a.StartTime == request.StartTime);
             if (isSlotTaken)
             {
-                // אנחנו מחזירים סטטוס 409 Conflict, שזו התשובה הסמנטית הנכונה ביותר
-                // למצב שבו הבקשה תקינה אבל מתנגשת עם המצב הנוכחי של המערכת.
-                return Conflict(new { message = "This time slot has just been taken. Please choose another one." });
+                return Conflict(new { message = "This time slot has just been taken." });
             }
-            // ===============================================================================
 
-            // 3. יצירת אובייקט התור החדש
+            // 3. יצירת התור החדש
             var newAppointment = new AppointmentSchedulerAPI.Models.Appointment
             {
                 ServiceId = request.ServiceId,
-                ClientId = userId, // <-- כאן אנחנו משייכים את התור למשתמש הרשום ששלפנו מהטוקן
+                ClientId = userId,
                 StartTime = request.StartTime,
                 EndTime = request.StartTime.AddMinutes(service.DurationInMinutes),
                 Status = "Confirmed",
-                GuestName = null, // זה לא תור של אורח
-                GuestPhone = null // זה לא תור של אורח
+                GuestName = currentUser.FullName, // <-- בונוס: נשמור גם את השם
+                GuestPhone = currentUser.PhoneNumber // <-- כאן אנחנו מעבירים את הטלפון!
             };
 
             // 4. שמירה בבסיס הנתונים
@@ -71,44 +71,57 @@ namespace AppointmentSchedulerAPI.Controllers
             await _context.SaveChangesAsync();
 
             // 5. החזרת תשובה מוצלחת
-            // מחזירים סטטוס 201 Created, שהוא הסטנדרט לפעולת יצירה מוצלחת,
-            // יחד עם התור החדש שנוצר.
             return CreatedAtAction(nameof(BookAppointment), new { id = newAppointment.Id }, newAppointment);
         }
 
         [HttpGet("my-appointments")] // Defines the route: GET /api/appointment/my-appointments
         public async Task<IActionResult> GetMyAppointments()
         {
-            // 1. זיהוי המשתמש מהטוקן
             var userIdString = User.FindFirstValue(ClaimTypes.NameIdentifier);
             if (!int.TryParse(userIdString, out var userId))
             {
-                return Unauthorized(); // Should not happen if [Authorize] is working
+                return Unauthorized();
             }
 
-            // 2. הגדרת הזמן הנוכחי ב-UTC
             var now = DateTime.UtcNow;
 
-            // 3. שאילתה לתורים מהעבר (ה-2 האחרונים)
-            var pastAppointments = await _context.Appointments
-                .Where(a => a.ClientId == userId && a.StartTime < now)
+            // בניית השאילתה הבסיסית
+            var baseQuery = _context.Appointments
+                .Where(a => a.ClientId == userId)
+                .Include(a => a.Service); // <-- שלב 1: בקש מ-EF לכלול את פרטי השירות
+
+            // שאילתה לתורים מהעבר
+            var pastAppointments = await baseQuery
+                .Where(a => a.StartTime < now)
                 .OrderByDescending(a => a.StartTime)
                 .Take(2)
                 .ToListAsync();
 
-            // 4. שאילתה לתורים עתידיים (כל התורים מהיום והלאה)
-            var futureAppointments = await _context.Appointments
-                .Where(a => a.ClientId == userId && a.StartTime >= now)
+            // שאילתה לתורים עתידיים
+            var futureAppointments = await baseQuery
+                .Where(a => a.StartTime >= now)
                 .OrderBy(a => a.StartTime)
                 .ToListAsync();
 
-            // 5. איחוד שתי הרשימות
+            // איחוד התוצאות (עדיין אובייקטים מלאים של Appointment)
             var allAppointments = futureAppointments.Concat(pastAppointments)
-                                                      .OrderBy(a => a.StartTime) // מיון סופי של הרשימה המאוחדת
-                                                      .ToList();
+                                                      .OrderBy(a => a.StartTime);
 
-            // 6. החזרת התוצאה
-            return Ok(allAppointments);
+            // ============================ שלב 2: עיצוב הנתונים ל-DTO ============================
+            var appointmentsDto = allAppointments.Select(a => new AppointmentDetailsDto
+            {
+                Id = a.Id,
+                StartTime = a.StartTime,
+                Service = new ServiceDetailsDto
+                {
+                    Name = a.Service.Name,
+                    Price = a.Service.Price,
+                    DurationInMinutes = a.Service.DurationInMinutes
+                }
+            }).ToList();
+            // ====================================================================================
+
+            return Ok(appointmentsDto);
         }
     }
 }
